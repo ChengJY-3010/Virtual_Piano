@@ -1,7 +1,6 @@
 ﻿// Virtual Piano with Hand Tracking
 // Global variables
 let synth;
-let activeNotes = new Set();
 let soundEnabled = false;
 let lastPlayedNote = null;
 let currentOctave = 4;
@@ -43,11 +42,11 @@ hands.setOptions({
 
 // Initialize Tone.js synthesizer
 function initializeSynth() {
-    // Polyphonic synth so multiple fingers can play simultaneously
-    synth = new Tone.PolySynth(Tone.Synth, {
+    // Monophonic synth: index finger controls a single note at a time
+    synth = new Tone.Synth({
         oscillator: { type: 'sine' },
         envelope: { 
-            attack: 0.02, 
+            attack: 0.05, 
             decay: 0.15, 
             sustain: 0.6, 
             release: 0.2 
@@ -146,21 +145,34 @@ function mapPointToNote(point) {
 // Play note
 function playNote(note) {
     if (!note) return;
-    if (!activeNotes.has(note)) {
+    if (note !== lastPlayedNote) {
+        if (lastPlayedNote) {
+            synth.triggerRelease();
+        }
         synth.triggerAttack(note);
-        activeNotes.add(note);
+        lastPlayedNote = note;
+        // Update UI
+        currentNoteElement.textContent = note;
+        currentOctaveElement.textContent = note.slice(-1);
+        currentFreqElement.textContent = Math.round(Tone.Frequency(note).toFrequency());
+        // Highlight current key
+        const allKeys = document.querySelectorAll('.piano-key');
+        allKeys.forEach(k => k.classList.remove('active'));
+        const el = document.querySelector(`[data-note="${note}"]`);
+        if (el) el.classList.add('active');
     }
-    updateNowPlayingUI();
-    updateKeyHighlights();
 }
 
 // Stop playing
 function stopPlaying() {
-    if (activeNotes.size > 0) {
-        activeNotes.forEach(n => synth.triggerRelease(n));
-        activeNotes.clear();
-        updateNowPlayingUI();
-        updateKeyHighlights();
+    if (lastPlayedNote) {
+        synth.triggerRelease();
+        lastPlayedNote = null;
+        currentNoteElement.textContent = 'None';
+        currentFreqElement.textContent = '0';
+        currentOctaveElement.textContent = '-';
+        const allKeys = document.querySelectorAll('.piano-key');
+        allKeys.forEach(k => k.classList.remove('active'));
     }
 }
 
@@ -226,35 +238,16 @@ function onResults(results) {
             lineWidth: 2
         });
         
-        // Determine which fingertips are extended and map each to a note
-        const extendedTips = getExtendedFingertips(landmarks);
-        if (extendedTips.length > 0) {
+        // Index finger only: play when hand open and index is pointing
+        if (isHandOpen(landmarks) && isIndexFingerPointing(landmarks)) {
             isHandDetected = true;
-            const notesNow = new Set();
-            extendedTips.forEach(idx => {
-                const n = mapPointToNote(landmarks[idx]);
-                notesNow.add(n);
-            });
-
-            // Start newly pressed notes
-            notesNow.forEach(n => {
-                if (!activeNotes.has(n)) synth.triggerAttack(n);
-            });
-
-            // Release notes no longer pressed
-            activeNotes.forEach(n => {
-                if (!notesNow.has(n)) synth.triggerRelease(n);
-            });
-
-            // Replace active set and update UI
-            activeNotes = notesNow;
-            handStatusElement.textContent = `Playing: ${Array.from(activeNotes).join(', ')}`;
+            const note = mapHandToNote(landmarks);
+            handStatusElement.textContent = 'Hand detected - Playing (index)';
             handStatusElement.className = 'hand-status detected';
-            updateNowPlayingUI();
-            updateKeyHighlights();
+            playNote(note);
         } else {
             isHandDetected = true;
-            handStatusElement.textContent = 'Hand detected - No fingers extended';
+            handStatusElement.textContent = 'Hand detected - Not pointing';
             handStatusElement.className = 'hand-status detected';
             stopPlaying();
         }
